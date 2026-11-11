@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b5bdb"/>
+      <stop offset="1" stop-color="#7048e8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#g)"/>
+  <!-- 슬라이드 화면 -->
+  <rect x="96" y="92" width="320" height="196" rx="20" fill="#fff"/>
+  <rect x="128" y="124" width="150" height="20" rx="10" fill="#3b5bdb"/>
+  <rect x="128" y="162" width="256" height="14" rx="7" fill="#c5cdf5"/>
+  <rect x="128" y="192" width="256" height="14" rx="7" fill="#c5cdf5"/>
+  <rect x="128" y="222" width="180" height="14" rx="7" fill="#c5cdf5"/>
+  <!-- 리모컨 -->
+  <rect x="196" y="316" width="120" height="120" rx="60" fill="#fff"/>
+  <path d="M236 376l26-22v44z" fill="#3b5bdb"/>
+  <path d="M290 376l-16-14v28z" fill="#9aa7ea"/>
+  <!-- 신호 -->
+  <path d="M150 352a110 110 0 0 0 0 48M362 352a110 110 0 0 1 0 48" fill="none" stroke="#fff" stroke-width="16" stroke-linecap="round" opacity=".75"/>
+</svg>
