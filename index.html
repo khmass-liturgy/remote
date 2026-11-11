@@ -7,7 +7,8 @@
 <meta name="description" content="스마트폰으로 발표 슬라이드를 넘기고 미리보는 프레젠테이션 리모컨">
 <meta name="theme-color" content="#0f1220">
 <link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="icon" type="image/svg+xml" href="icons/favicon.svg">
+<link rel="icon" href="favicon.ico" sizes="32x32">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -47,6 +48,9 @@ input,textarea{background:#0b0e1a;border:1px solid var(--line);border-radius:10p
 #setup{flex:1;display:flex;gap:20px;padding:24px;flex-wrap:wrap;align-content:center;justify-content:center;overflow:auto}
 #drop{flex:1 1 380px;max-width:560px;min-height:300px;border:2px dashed var(--line);border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center}
 #drop.over{border-color:var(--accent);background:var(--panel)}
+#pptBox{border-top:1px solid var(--line);padding-top:14px;margin-top:6px;font-size:14px;width:100%}
+#pptBox p{margin:6px 0 10px;font-size:13px;line-height:1.5}
+a.btn{display:inline-block;border-radius:12px;background:var(--panel2);padding:10px 14px;color:var(--text);text-decoration:none}
 #drop canvas{max-width:100%;max-height:220px;border-radius:8px}
 #join{flex:0 1 320px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
 #qr{background:#fff;border-radius:12px;padding:10px;width:200px;height:200px}
@@ -145,6 +149,14 @@ input,textarea{background:#0b0e1a;border:1px solid var(--line);border-radius:10p
         <button class="primary" id="start" disabled>▶ 발표 시작</button>
       </div>
       <input type="file" id="file" accept="application/pdf,image/*" multiple hidden>
+      <div id="pptBox">
+        <b>파워포인트 직접 조작 (윈도우)</b>
+        <p class="muted">도우미를 받아 실행하고 파워포인트에서 발표 파일을 연 뒤 연결하세요. 애니메이션·동영상까지 원본 그대로 발표됩니다.</p>
+        <div class="row">
+          <a class="btn" href="helper/ppt-helper.cmd" download="ppt-helper.cmd">⬇ 도우미 받기</a>
+          <button id="pptBtn">🔗 파워포인트 연결</button>
+        </div>
+      </div>
     </div>
     <div id="join">
       <div class="muted" style="font-size:13px">스마트폰으로 QR을 찍거나 코드를 입력하세요</div>
@@ -338,7 +350,9 @@ async function loadFiles(files) {
       } };
     }
   } catch (e) { console.error(e); return toast('파일을 열 수 없습니다: ' + e.message); }
+  pptStop();
   deckName = deck.name; total = deck.count; cur = 1; black = false; thumbs.clear();
+  $('#start').textContent = '▶ 발표 시작';
   const pv = await deck.render(1, 480, 270);
   $('#dropInfo').replaceChildren(pv, Object.assign(document.createElement('p'), { innerHTML: `<b>${deckName.replace(/</g, '&lt;')}</b> · ${total}장` }));
   $('#start').disabled = false;
@@ -355,14 +369,17 @@ async function drawSlide() {
   $('#slide').replaceChildren(c);
   $('#sPos').textContent = `${cur} / ${total}`;
 }
+const step = d => deck?.ppt ? pptCmd(d > 0 ? 'next' : 'prev') : go(cur + d);
 function go(n) {
   if (!deck) return;
   n = Math.max(1, Math.min(total, n | 0));
+  if (deck.ppt) return pptCmd('go', { n });
   if (n === cur && !black) return;
   cur = n; if (black) setBlack(false, true);
   drawSlide(); broadcast(stateMsg());
 }
 function setBlack(on, quiet) {
+  if (deck?.ppt) return pptCmd('black', { on: on ? 1 : 0 });
   black = !!on;
   $('#blackout').style.display = black ? 'block' : 'none';
   $('#sBlack').classList.toggle('on', black);
@@ -381,11 +398,11 @@ function onHostMsg(c, m) {
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
     case 'hello': c.send(stateMsg()); break;
-    case 'next': go(cur + 1); break;
-    case 'prev': go(cur - 1); break;
+    case 'next': step(1); break;
+    case 'prev': step(-1); break;
     case 'go': go(m.n); break;
     case 'black': setBlack(m.on); break;
-    case 'laser': showLaser(m.on ? m : null); break;
+    case 'laser': deck?.ppt ? pptLaser(m) : showLaser(m.on ? m : null); break;
     case 'thumb':
       if (deck && m.n >= 1 && m.n <= total) {
         const name = deckName;
@@ -402,6 +419,81 @@ function onHostMsg(c, m) {
       if (m.all && typeof m.all === 'object') { allNotes = m.all; saveNotes(); broadcast({ t: 'notes', notes: deckNotes() }); }
       break;
   }
+}
+// ── 파워포인트 직접 조작 (PC에서 실행 중인 도우미 프로그램과 통신) ──
+const PPT = 'http://localhost:8765';
+let pptT = null, pptBusy = false, pptLost = 0, laserAt = 0;
+async function pptFetch(path, opt) {
+  const r = await fetch(PPT + path, { cache: 'no-store', ...opt });
+  if (!r.ok) throw new Error('도우미 오류 ' + r.status);
+  return r;
+}
+function pptStop() { clearInterval(pptT); pptT = null; }
+function pptInfo(html) {
+  const p = Object.assign(document.createElement('p'), { innerHTML: html });
+  const old = $('#dropInfo canvas');
+  $('#dropInfo').replaceChildren(...(old && deck?.ppt ? [old, p] : [Object.assign(document.createElement('div'), { textContent: '📽️', style: 'font-size:44px' }), p]));
+}
+async function pptConnect() {
+  let st;
+  try { st = await (await pptFetch('/state')).json(); }
+  catch { return toast('도우미에 연결할 수 없습니다. ppt-helper.cmd를 실행했는지, 브라우저의 로컬 네트워크 접근 허용을 확인하세요'); }
+  if (!st.ok) return toast('파워포인트에서 발표 파일을 먼저 열어 주세요');
+  if ($('#stage').classList.contains('show')) exitStage();
+  pptStop(); pptLost = 0;
+  await pptApply(st, true);
+  pptT = setInterval(pptPoll, 600);
+  toast('파워포인트에 연결되었습니다');
+}
+async function pptPoll() {
+  if (pptBusy) return;
+  pptBusy = true;
+  try { await pptApply(await (await pptFetch('/state')).json()); pptLost = 0; }
+  catch { if (++pptLost === 3) { hostStatus('도우미와 연결이 끊겼습니다 — ppt-helper.cmd를 확인하세요'); } }
+  pptBusy = false;
+}
+async function pptApply(st, force) {
+  if (!st.ok) { if (deck?.ppt) pptInfo('파워포인트에서 발표 파일을 열어 주세요'); return; }
+  if (pptLost >= 3) hostStatus();
+  const fresh = force || !deck?.ppt || st.name !== deckName || st.total !== total;
+  const changed = fresh || st.cur !== cur || st.black !== black || st.running !== deck.running;
+  if (fresh) {
+    thumbs.clear();
+    deck = { ppt: true, name: st.name, count: st.total, async render(n, maxW, maxH) {
+      const b = await createImageBitmap(await (await pptFetch('/thumb?n=' + n)).blob());
+      const s = Math.min(maxW / b.width, maxH / b.height, 1), c = document.createElement('canvas');
+      c.width = Math.round(b.width * s); c.height = Math.round(b.height * s);
+      c.getContext('2d').drawImage(b, 0, 0, c.width, c.height);
+      return c;
+    } };
+    deckName = st.name; total = st.total;
+    try {                                   // 파워포인트의 슬라이드 노트를 메모로 가져오기 (직접 쓴 메모가 우선)
+      const pn = (await (await pptFetch('/notes')).json()).notes || {};
+      for (const k in pn) if (!deckNotes()[k]) deckNotes()[k] = pn[k];
+    } catch {}
+    $('#start').disabled = false;
+  }
+  cur = st.cur; black = st.black; deck.running = st.running;
+  if (!changed) return;
+  $('#start').textContent = st.running ? '● 슬라이드 쇼 진행 중' : '▶ 슬라이드 쇼 시작';
+  broadcast(stateMsg());
+  const name = deckName, n = cur;
+  if (fresh) $('#dropInfo').replaceChildren();
+  deck.render(n, 480, 270).then(c => {
+    if (name !== deckName || n !== cur || !deck?.ppt) return;
+    $('#dropInfo').replaceChildren(c);
+    pptInfo(`<b>${name.replace(/</g, '&lt;')}</b> · ${cur} / ${total} · 파워포인트 직접 조작`);
+  }).catch(() => {});
+}
+async function pptCmd(c, args = {}) {
+  try { await pptApply(await (await pptFetch('/cmd?' + new URLSearchParams({ c, ...args }), { method: 'POST' })).json()); }
+  catch { if (c !== 'laser') toast('도우미에 명령을 보내지 못했습니다'); }
+}
+function pptLaser(m) {
+  const now = Date.now();
+  if (m.on && now - laserAt < 80) return;
+  laserAt = now;
+  pptCmd('laser', m.on ? { on: 1, x: m.x, y: m.y } : { on: 0 });
 }
 function startStage() {
   if (!deck) return;
@@ -421,10 +513,11 @@ function hostEvents() {
   addEventListener('dragover', e => { e.preventDefault(); d.classList.add('over'); });
   addEventListener('dragleave', () => d.classList.remove('over'));
   addEventListener('drop', e => { e.preventDefault(); d.classList.remove('over'); if (mode === 'host') loadFiles(e.dataTransfer.files); });
-  $('#start').onclick = startStage;
+  $('#start').onclick = () => deck?.ppt ? pptCmd('start') : startStage();
+  $('#pptBtn').onclick = pptConnect;
   $('#sExit').onclick = exitStage;
-  $('#sPrev').onclick = () => go(cur - 1);
-  $('#sNext').onclick = () => go(cur + 1);
+  $('#sPrev').onclick = () => step(-1);
+  $('#sNext').onclick = () => step(1);
   $('#sBlack').onclick = () => setBlack(!black);
   $('#sFull').onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
   $('#hHome').onclick = () => { history.replaceState(null, '', location.pathname + location.search); location.reload(); };
@@ -432,7 +525,7 @@ function hostEvents() {
     $('#stage').classList.add('tools'); clearTimeout(toolT);
     toolT = setTimeout(() => $('#stage').classList.remove('tools'), 2500);
   });
-  $('#slideBox').addEventListener('click', () => go(cur + 1));
+  $('#slideBox').addEventListener('click', () => step(1));
   addEventListener('resize', () => { if ($('#stage').classList.contains('show')) drawSlide(); });
   addEventListener('keydown', e => {      // 키보드 · 블루투스 프리젠터(클리커)도 그대로 동작
     if (mode !== 'host' || !$('#stage').classList.contains('show') || e.target.matches('input,textarea')) return;
