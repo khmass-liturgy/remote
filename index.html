@@ -64,6 +64,9 @@ a.btn{display:inline-block;border-radius:12px;background:var(--panel2);padding:1
 #stage.show{display:flex}
 #stage.tools{cursor:default}
 #slideBox{position:relative;line-height:0}
+#slideBox video,#slideBox .aud{position:absolute;cursor:pointer;object-fit:fill}
+#slideBox video.idle{opacity:0}
+#slideBox .aud{background:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:28px;line-height:1;text-shadow:0 0 6px #000}
 #laser{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#ff2d2d;box-shadow:0 0 14px 6px rgba(255,45,45,.75);display:none;pointer-events:none}
 #blackout{position:absolute;inset:0;background:#000;display:none}
 #stageBar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:rgba(25,29,51,.92);border:1px solid var(--line);border-radius:14px;padding:8px 10px;opacity:0;transition:opacity .2s;pointer-events:none;font-size:14px;white-space:nowrap}
@@ -85,6 +88,7 @@ a.btn{display:inline-block;border-radius:12px;background:var(--panel2);padding:1
 #pvNext{flex:1}
 #note{flex:1;resize:none;font-size:14px;line-height:1.5;user-select:text;-webkit-user-select:text}
 #rTools{display:flex;gap:6px}
+#rTools button[hidden]{display:none}
 #rTools button{flex:1;padding:10px 2px;font-size:13px}
 #rNav{display:flex;gap:8px;height:22vh;min-height:96px}
 #rNav button{font-size:40px;border-radius:18px}
@@ -141,14 +145,14 @@ a.btn{display:inline-block;border-radius:12px;background:var(--panel2);padding:1
     <div id="drop">
       <div id="dropInfo">
         <div style="font-size:44px">📄</div>
-        <p><b>PDF 또는 이미지 파일</b>을 여기에 끌어다 놓으세요</p>
-        <p class="muted" style="font-size:13px">파워포인트는 [파일 → 내보내기 → PDF]로 저장한 뒤 열어 주세요.<br>파일은 서버로 올라가지 않고 이 PC에서만 열립니다.</p>
+        <p><b>파워포인트(PPTX) · PDF · 이미지 파일</b>을 여기에 끌어다 놓으세요</p>
+        <p class="muted" style="font-size:13px">PPTX는 슬라이드 안의 동영상·소리도 재생됩니다.<br>파일은 서버로 올라가지 않고 이 PC에서만 열립니다.</p>
       </div>
       <div class="row">
         <button id="pick">파일 선택</button>
         <button class="primary" id="start" disabled>▶ 발표 시작</button>
       </div>
-      <input type="file" id="file" accept="application/pdf,image/*" multiple hidden>
+      <input type="file" id="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/pdf,image/*" multiple hidden>
       <div id="pptBox">
         <b>파워포인트 직접 조작 (윈도우)</b>
         <p class="muted">도우미를 받아 실행하고 파워포인트에서 발표 파일을 연 뒤 연결하세요. 애니메이션·동영상까지 원본 그대로 발표됩니다.</p>
@@ -200,6 +204,7 @@ a.btn{display:inline-block;border-radius:12px;background:var(--panel2);padding:1
     <button id="tList">▦ 목록</button>
     <button id="tLaser">🔴 포인터</button>
     <button id="tBlack">⬛ 검은화면</button>
+    <button id="tMedia" hidden>🎬 영상</button>
     <button data-open="gist">💾 저장</button>
     <button id="tExit">✕ 끊기</button>
   </div>
@@ -313,21 +318,30 @@ function hostStatus(err) {
   $('#hDot').className = $('#sDot').className = 'dot ' + (ok ? 'ok' : 'wait');
   $('#hStatus').textContent = err || (ok ? `리모컨 ${n}대 연결됨` : '리모컨 연결을 기다리는 중…');
 }
-const stateMsg = () => ({ t: 'state', cur, total, name: deckName, black, notes: deckNotes() });
+const stateMsg = () => ({ t: 'state', cur, total, name: deckName, black, notes: deckNotes(), media: mediaEls.length, playing: mediaEls.some(m => !m.paused && !m.ended) });
 function broadcast(m) { conns.forEach(c => { try { c.open && c.send(m); } catch {} }); }
 
 async function loadFiles(files) {
   files = [...files];
   if (!files.length) return;
   const pdf = files.find(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  const pptx = files.find(f => /\.pptx$/i.test(f.name));
+  if (!pptx && files.some(f => /\.ppt$/i.test(f.name))) return toast('옛 형식(.ppt)은 파워포인트에서 .pptx로 저장한 뒤 열어 주세요');
+  const loadScript = src => new Promise((ok, no) => {
+    const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = no; document.head.append(el);
+  });
+  let next;
   try {
-    if (pdf) {
-      if (!window.pdfjsLib) await new Promise((ok, no) => {
-        const s = document.createElement('script'); s.src = 'vendor/pdf.min.js'; s.onload = ok; s.onerror = no; document.head.append(s);
-      });
+    if (pptx) {                    // 이음오피스(IeumOffice) 파워포인트 엔진으로 슬라이드를 그립니다
+      toast('파워포인트 파일을 여는 중…');
+      if (!window.IeumPptx) await loadScript('vendor/ieum-pptx.js');
+      const d = await IeumPptx.open(await pptx.arrayBuffer());
+      next = { name: pptx.name, count: d.count, render: (n, w, h) => d.render(n, w, h), media: n => d.media(n), close: () => d.close(), pptNotes: d };
+    } else if (pdf) {
+      if (!window.pdfjsLib) await loadScript('vendor/pdf.min.js');
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
       const doc = await pdfjsLib.getDocument({ data: await pdf.arrayBuffer(), cMapUrl: 'vendor/cmaps/', cMapPacked: true }).promise;
-      deck = { name: pdf.name, count: doc.numPages, async render(n, maxW, maxH) {
+      next = { name: pdf.name, count: doc.numPages, async render(n, maxW, maxH) {
         const page = await doc.getPage(n), v = page.getViewport({ scale: 1 });
         const vp = page.getViewport({ scale: Math.min(maxW / v.width, maxH / v.height) });
         const c = document.createElement('canvas');
@@ -340,7 +354,7 @@ async function loadFiles(files) {
         .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
       if (!imgs.length) return toast('PDF 또는 이미지 파일만 열 수 있습니다');
       const bmps = await Promise.all(imgs.map(f => createImageBitmap(f)));
-      deck = { name: imgs.length > 1 ? `${imgs[0].name} 외 ${imgs.length - 1}장` : imgs[0].name, count: bmps.length, async render(n, maxW, maxH) {
+      next = { name: imgs.length > 1 ? `${imgs[0].name} 외 ${imgs.length - 1}장` : imgs[0].name, count: bmps.length, async render(n, maxW, maxH) {
         const b = bmps[n - 1], s = Math.min(maxW / b.width, maxH / b.height);
         const c = document.createElement('canvas');
         c.width = Math.round(b.width * s); c.height = Math.round(b.height * s);
@@ -350,9 +364,14 @@ async function loadFiles(files) {
       } };
     }
   } catch (e) { console.error(e); return toast('파일을 열 수 없습니다: ' + e.message); }
-  pptStop();
+  pptStop(); clearMedia();
+  try { deck?.close?.(); } catch {}
+  deck = next;
   deckName = deck.name; total = deck.count; cur = 1; black = false; thumbs.clear();
   $('#start').textContent = '▶ 발표 시작';
+  if (deck.pptNotes) {             // 파워포인트의 슬라이드 노트를 메모로 가져오기 (직접 쓴 메모가 우선)
+    for (let n = 1; n <= total; n++) { const t = deck.pptNotes.notes(n); if (t && !deckNotes()[n]) deckNotes()[n] = t; }
+  }
   const pv = await deck.render(1, 480, 270);
   $('#dropInfo').replaceChildren(pv, Object.assign(document.createElement('p'), { innerHTML: `<b>${deckName.replace(/</g, '&lt;')}</b> · ${total}장` }));
   $('#start').disabled = false;
@@ -360,6 +379,37 @@ async function loadFiles(files) {
   if ($('#stage').classList.contains('show')) drawSlide();
 }
 
+// ── 슬라이드 안의 동영상·소리 (PPTX) ──
+let mediaEls = [];
+function clearMedia() {
+  mediaEls.forEach(m => { m.pause(); (m.closest('.aud') || m).remove(); });
+  mediaEls = [];
+}
+function setupMedia() {
+  clearMedia();
+  let list = [];
+  try { list = deck?.media?.(cur) || []; } catch (e) { console.error(e); }
+  for (const m of list) {
+    const el = document.createElement(m.kind === 'video' ? 'video' : 'audio');
+    el.src = m.url; el.preload = 'auto'; el.playsInline = true;
+    const box = m.kind === 'video' ? el : Object.assign(document.createElement('div'), { className: 'aud' });
+    if (box !== el) box.append(el); else el.className = 'idle';
+    Object.assign(box.style, { left: m.x * 100 + '%', top: m.y * 100 + '%', width: m.w * 100 + '%', height: m.h * 100 + '%', transform: m.rotation ? `rotate(${m.rotation}deg)` : '' });
+    box.addEventListener('click', e => { e.stopPropagation(); toggleMedia(el); });
+    const sync = () => { if (el.tagName === 'VIDEO') el.classList.toggle('idle', el.paused && el.currentTime === 0); broadcast(stateMsg()); };
+    el.addEventListener('play', sync); el.addEventListener('pause', sync);
+    el.addEventListener('ended', () => { el.currentTime = 0; sync(); });
+    el.addEventListener('error', () => toast('이 브라우저에서 재생할 수 없는 영상 형식입니다 (MP4 권장)'));
+    $('#slideBox').append(box); mediaEls.push(el);
+  }
+}
+function toggleMedia(el) {
+  el = el || mediaEls.find(m => !m.paused) || mediaEls[0];
+  if (!el) return;
+  if (!el.paused) return el.pause();
+  mediaEls.forEach(m => m !== el && m.pause());
+  el.play().catch(() => { el.muted = true; el.play().then(() => toast('소리 없이 재생합니다 — 화면을 한 번 클릭하면 소리가 납니다')).catch(() => {}); });
+}
 async function drawSlide() {
   if (!deck) return;
   const seq = ++renderSeq, dpr = window.devicePixelRatio || 1;
@@ -368,6 +418,7 @@ async function drawSlide() {
   c.style.width = c.width / dpr + 'px'; c.style.height = c.height / dpr + 'px';
   $('#slide').replaceChildren(c);
   $('#sPos').textContent = `${cur} / ${total}`;
+  setupMedia(); broadcast(stateMsg());
 }
 const step = d => deck?.ppt ? pptCmd(d > 0 ? 'next' : 'prev') : go(cur + d);
 function go(n) {
@@ -375,7 +426,7 @@ function go(n) {
   n = Math.max(1, Math.min(total, n | 0));
   if (deck.ppt) return pptCmd('go', { n });
   if (n === cur && !black) return;
-  cur = n; if (black) setBlack(false, true);
+  cur = n; clearMedia(); if (black) setBlack(false, true);
   drawSlide(); broadcast(stateMsg());
 }
 function setBlack(on, quiet) {
@@ -402,6 +453,7 @@ function onHostMsg(c, m) {
     case 'prev': step(-1); break;
     case 'go': go(m.n); break;
     case 'black': setBlack(m.on); break;
+    case 'media': toggleMedia(); break;
     case 'laser': deck?.ppt ? pptLaser(m) : showLaser(m.on ? m : null); break;
     case 'thumb':
       if (deck && m.n >= 1 && m.n <= total) {
@@ -458,7 +510,8 @@ async function pptApply(st, force) {
   const fresh = force || !deck?.ppt || st.name !== deckName || st.total !== total;
   const changed = fresh || st.cur !== cur || st.black !== black || st.running !== deck.running;
   if (fresh) {
-    thumbs.clear();
+    thumbs.clear(); clearMedia();
+    try { deck?.close?.(); } catch {}
     deck = { ppt: true, name: st.name, count: st.total, async render(n, maxW, maxH) {
       const b = await createImageBitmap(await (await pptFetch('/thumb?n=' + n)).blob());
       const s = Math.min(maxW / b.width, maxH / b.height, 1), c = document.createElement('canvas');
@@ -502,6 +555,7 @@ function startStage() {
   drawSlide();
 }
 function exitStage() {
+  clearMedia();
   $('#stage').classList.remove('show');
   if (document.fullscreenElement) document.exitFullscreen();
 }
@@ -536,6 +590,7 @@ function hostEvents() {
     else if (k === 'End') go(total);
     else if (k === 'b' || k === 'B' || k === '.') setBlack(!black);
     else if (k === 'f' || k === 'F') $('#sFull').click();
+    else if (k === 'p' || k === 'P') toggleMedia();
     else if (k === 'Escape') exitStage();
     else return;
     e.preventDefault();
@@ -587,6 +642,7 @@ function onRemoteMsg(m) {
     $('#rStatus').textContent = total ? deckName : '화면에서 파일을 열어 주세요';
     $('#rPos').textContent = total ? `${cur} / ${total}` : '– / –';
     $('#tBlack').classList.toggle('on', black);
+    $('#tMedia').hidden = !m.media; $('#tMedia').textContent = m.playing ? '⏸ 영상' : '🎬 영상'; $('#tMedia').classList.toggle('on', !!m.playing);
     if (moved || document.activeElement !== $('#note')) $('#note').value = deckNotes()[cur] || '';
     paintPreview(); markGrid();
   } else if (m.t === 'thumb') {
@@ -647,6 +703,7 @@ function remoteEvents() {
   tap($('#bNext'), () => { if (send({ t: 'next' }) && !tStart && !tAcc) tToggle(); });
   tap($('#bPrev'), () => send({ t: 'prev' }));
   tap($('#tBlack'), () => send({ t: 'black', on: !black }));
+  tap($('#tMedia'), () => send({ t: 'media' }));
   tap($('#tList'), () => total ? openList() : toast('화면에 열린 슬라이드가 없습니다'));
   tap($('#tLaser'), () => {
     laserOn = !laserOn; $('#tLaser').classList.toggle('on', laserOn); $('#pvCur').classList.toggle('laser', laserOn);
