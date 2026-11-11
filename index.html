@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>슬라이드 리모컨</title>
+<meta name="description" content="스마트폰으로 발표 슬라이드를 넘기고 미리보는 프레젠테이션 리모컨">
+<meta name="theme-color" content="#0f1220">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="리모컨">
+<style>
+:root{--bg:#0f1220;--panel:#191d33;--panel2:#232846;--line:#333a63;--text:#eef0fb;--muted:#9aa2c7;--accent:#5c7cfa;--accent2:#7048e8;--ok:#40c057;--warn:#fab005;--bad:#fa5252}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif}
+body{overscroll-behavior:none}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:0;border-radius:12px;background:var(--panel2);padding:10px 14px}
+button:active{filter:brightness(1.3)}
+button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));font-weight:700}
+button.on{background:var(--accent);}
+input,textarea{background:#0b0e1a;border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+.view{display:none;height:100%}
+.view.active{display:flex}
+.muted{color:var(--muted)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);flex:none}
+.dot.ok{background:var(--ok)}.dot.wait{background:var(--warn)}
+
+/* 처음 화면 */
+#home{flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:24px;overflow:auto}
+#home h1{margin:0;font-size:26px;display:flex;align-items:center;gap:12px}
+#home h1 img{width:48px;height:48px}
+.cards{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;width:100%;max-width:760px}
+.card{flex:1 1 300px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;display:flex;flex-direction:column;gap:12px}
+.card h2{margin:0;font-size:19px}
+.card p{margin:0;font-size:14px;line-height:1.5;color:var(--muted)}
+#codeIn{font-size:28px;letter-spacing:8px;text-align:center;font-weight:700}
+.foot{font-size:13px;color:var(--muted);text-align:center;line-height:1.6;max-width:760px}
+.linkbtn{background:none;padding:4px;color:var(--accent);text-decoration:underline}
+
+/* PC 화면: 준비 */
+#host{flex-direction:column}
+#setup{flex:1;display:flex;gap:20px;padding:24px;flex-wrap:wrap;align-content:center;justify-content:center;overflow:auto}
+#drop{flex:1 1 380px;max-width:560px;min-height:300px;border:2px dashed var(--line);border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center}
+#drop.over{border-color:var(--accent);background:var(--panel)}
+#drop canvas{max-width:100%;max-height:220px;border-radius:8px}
+#join{flex:0 1 320px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+#qr{background:#fff;border-radius:12px;padding:10px;width:200px;height:200px}
+#qr svg{width:100%;height:100%;display:block}
+#code{font-size:40px;font-weight:800;letter-spacing:6px}
+#joinUrl{font-size:12px;word-break:break-all}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center}
+
+/* PC 화면: 발표 */
+#stage{position:fixed;inset:0;background:#000;display:none;align-items:center;justify-content:center;cursor:none;overflow:hidden}
+#stage.show{display:flex}
+#stage.tools{cursor:default}
+#slideBox{position:relative;line-height:0}
+#laser{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#ff2d2d;box-shadow:0 0 14px 6px rgba(255,45,45,.75);display:none;pointer-events:none}
+#blackout{position:absolute;inset:0;background:#000;display:none}
+#stageBar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:rgba(25,29,51,.92);border:1px solid var(--line);border-radius:14px;padding:8px 10px;opacity:0;transition:opacity .2s;pointer-events:none;font-size:14px;white-space:nowrap}
+#stage.tools #stageBar{opacity:1;pointer-events:auto}
+
+/* 리모컨 */
+#remote{flex-direction:column;padding:calc(8px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom));gap:8px;user-select:none;-webkit-user-select:none}
+#rTop{display:flex;align-items:center;gap:10px;font-size:15px}
+#rTop .grow{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rPos{font-weight:800;font-size:18px}
+#timer{font-variant-numeric:tabular-nums;font-weight:700;padding:6px 10px}
+#rMain{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
+.pv{position:relative;background:#000;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:0}
+.pv img{max-width:100%;max-height:100%;display:block;pointer-events:none}
+.pv .tag{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);font-size:11px;padding:3px 8px;border-radius:99px}
+#pvCur{flex:3;touch-action:none}
+#pvCur.laser{outline:2px solid var(--bad)}
+#rSub{flex:2;display:flex;gap:8px;min-height:0}
+#pvNext{flex:1}
+#note{flex:1;resize:none;font-size:14px;line-height:1.5;user-select:text;-webkit-user-select:text}
+#rTools{display:flex;gap:6px}
+#rTools button{flex:1;padding:10px 2px;font-size:13px}
+#rNav{display:flex;gap:8px;height:22vh;min-height:96px}
+#rNav button{font-size:40px;border-radius:18px}
+#bPrev{flex:1}#bNext{flex:2}
+@media (orientation:landscape){
+  #rMain{flex-direction:row}#pvCur{flex:3}#rSub{flex:2;flex-direction:column}
+  #rNav{height:18vh;min-height:64px}
+}
+
+/* 슬라이드 목록 / 설정 */
+.sheet{position:fixed;inset:0;background:rgba(8,10,20,.96);display:none;flex-direction:column;z-index:20;padding:calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))}
+.sheet.show{display:flex}
+.sheet header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-weight:700;font-size:17px}
+#grid{flex:1;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;align-content:start}
+.cell{position:relative;aspect-ratio:16/9;background:#000;border-radius:8px;overflow:hidden;border:2px solid transparent;padding:0}
+.cell.cur{border-color:var(--accent)}
+.cell img{width:100%;height:100%;object-fit:contain}
+.cell span{position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.65);font-size:11px;padding:1px 6px;border-radius:6px}
+#gistBox{max-width:520px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:10px;overflow:auto}
+#gistBox label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+#gistBox label.chk{flex-direction:row;align-items:center;gap:8px}
+#gistBox label.chk input{width:auto}
+#gistStatus{font-size:13px;min-height:18px}
+#toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:8px 14px;border-radius:99px;font-size:13px;z-index:50;display:none;max-width:90vw}
+</style>
+</head>
+<body>
+
+<!-- ───────── 처음 화면 ───────── -->
+<section id="home" class="view active">
+  <h1><img src="icons/icon.svg" alt="">슬라이드 리모컨</h1>
+  <div class="cards">
+    <div class="card">
+      <h2>🖥️ 화면 (PC · 프로젝터)</h2>
+      <p>발표할 PDF나 이미지를 열고 화면에 띄웁니다. 표시되는 QR코드나 6자리 코드로 스마트폰을 연결하세요.</p>
+      <button class="primary" id="goHost">화면으로 시작</button>
+    </div>
+    <div class="card">
+      <h2>📱 리모컨 (스마트폰)</h2>
+      <p>PC 화면에 보이는 6자리 코드를 입력하세요. QR코드를 찍으면 바로 연결됩니다.</p>
+      <input id="codeIn" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off">
+      <button class="primary" id="goRemote">리모컨 연결</button>
+    </div>
+  </div>
+  <div class="foot">
+    Wi-Fi · 모바일 데이터 · 블루투스 테더링 등 두 기기가 인터넷에 연결되어 있으면 동작합니다.<br>
+    <button class="linkbtn" data-open="gist">💾 Gist 저장 설정</button>
+  </div>
+</section>
+
+<!-- ───────── PC 화면 ───────── -->
+<section id="host" class="view">
+  <div id="setup">
+    <div id="drop">
+      <div id="dropInfo">
+        <div style="font-size:44px">📄</div>
+        <p><b>PDF 또는 이미지 파일</b>을 여기에 끌어다 놓으세요</p>
+        <p class="muted" style="font-size:13px">파워포인트는 [파일 → 내보내기 → PDF]로 저장한 뒤 열어 주세요.<br>파일은 서버로 올라가지 않고 이 PC에서만 열립니다.</p>
+      </div>
+      <div class="row">
+        <button id="pick">파일 선택</button>
+        <button class="primary" id="start" disabled>▶ 발표 시작</button>
+      </div>
+      <input type="file" id="file" accept="application/pdf,image/*" multiple hidden>
+    </div>
+    <div id="join">
+      <div class="muted" style="font-size:13px">스마트폰으로 QR을 찍거나 코드를 입력하세요</div>
+      <div id="qr"></div>
+      <div id="code">······</div>
+      <div id="joinUrl" class="muted"></div>
+      <div class="row"><span class="dot wait" id="hDot"></span><span id="hStatus">연결 서버에 접속 중…</span></div>
+      <div class="row">
+        <button class="linkbtn" data-open="gist">💾 Gist 저장</button>
+        <button class="linkbtn" id="hHome">처음으로</button>
+      </div>
+    </div>
+  </div>
+  <div id="stage">
+    <div id="slideBox"><div id="slide"></div><div id="laser"></div></div>
+    <div id="blackout"></div>
+    <div id="stageBar">
+      <button id="sPrev">◀</button><span id="sPos">1 / 1</span><button id="sNext">▶</button>
+      <button id="sBlack">검은 화면</button><button id="sFull">전체화면</button><button id="sExit">종료</button>
+      <span class="dot" id="sDot"></span><span id="sCode" class="muted"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 리모컨 ───────── -->
+<section id="remote" class="view">
+  <div id="rTop">
+    <span class="dot wait" id="rDot"></span>
+    <span class="grow" id="rStatus">연결 중…</span>
+    <span id="rPos">– / –</span>
+    <button id="timer" title="누르면 시작/정지, 길게 누르면 초기화">00:00</button>
+  </div>
+  <div id="rMain">
+    <div class="pv" id="pvCur"><span class="tag">현재</span><img id="imgCur" alt=""></div>
+    <div id="rSub">
+      <div class="pv" id="pvNext"><span class="tag">다음</span><img id="imgNext" alt=""></div>
+      <textarea id="note" placeholder="이 슬라이드의 발표 메모…"></textarea>
+    </div>
+  </div>
+  <div id="rTools">
+    <button id="tList">▦ 목록</button>
+    <button id="tLaser">🔴 포인터</button>
+    <button id="tBlack">⬛ 검은화면</button>
+    <button data-open="gist">💾 저장</button>
+    <button id="tExit">✕ 끊기</button>
+  </div>
+  <div id="rNav">
+    <button id="bPrev">◀</button>
+    <button id="bNext" class="primary">▶</button>
+  </div>
+</section>
+
+<!-- 슬라이드 목록 -->
+<div class="sheet" id="listSheet">
+  <header><span>슬라이드 목록</span><button data-close>닫기</button></header>
+  <div id="grid"></div>
+</div>
+
+<!-- Gist 저장 -->
+<div class="sheet" id="gistSheet">
+  <header><span>💾 Gist 저장소</span><button data-close>닫기</button></header>
+  <div id="gistBox">
+    <p class="muted" style="margin:0;font-size:13px;line-height:1.6">슬라이드별 발표 메모를 내 GitHub Gist에 저장하고 다른 기기에서 불러옵니다. 토큰은 <b>gist</b> 권한만 있으면 됩니다.</p>
+    <label>GitHub 토큰<input id="gToken" type="password" placeholder="ghp_… 또는 github_pat_…" autocomplete="off"></label>
+    <label>Gist ID (비워 두면 새로 만듭니다)<input id="gId" type="text" autocomplete="off"></label>
+    <label class="chk"><input id="gRemember" type="checkbox">이 기기에 토큰 기억하기</label>
+    <label class="chk"><input id="gPublic" type="checkbox">새 Gist를 공개로 만들기</label>
+    <div class="row" style="justify-content:flex-start">
+      <button class="primary" id="gSave">💾 저장</button>
+      <button id="gLoad">📂 불러오기</button>
+    </div>
+    <div id="gistStatus"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="vendor/peerjs.min.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const PREFIX = 'khmass-remote-';
+const LS = { notes: 'kr-notes', token: 'kr-gist-token', gid: 'kr-gist-id', code: 'kr-code' };
+const qs = new URLSearchParams(location.search);
+
+function peerOpts() {            // ?ps=host:port → 자체 PeerJS 서버 사용(테스트/사내망용)
+  const ps = qs.get('ps');
+  if (!ps) return {};
+  const [host, port] = ps.split(':');
+  return { host, port: +port || 9000, path: '/', secure: false };
+}
+function show(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === id));
+}
+let toastT;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', 2600);
+}
+let wake;
+async function keepAwake() {
+  try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && mode) keepAwake(); });
+
+// ── 공통 상태 ─────────────────────────────────────────────
+let mode = null;                 // 'host' | 'remote'
+let allNotes = {};               // { 파일이름: { 슬라이드번호: 메모 } }
+try { allNotes = JSON.parse(localStorage.getItem(LS.notes)) || {}; } catch {}
+let deckName = '';
+let cur = 1, total = 0, black = false;
+const deckNotes = () => (allNotes[deckName] ||= {});
+const saveNotes = () => localStorage.setItem(LS.notes, JSON.stringify(allNotes));
+
+// ══════════════════════ PC 화면 ══════════════════════
+let deck = null, peer = null, code = '';
+const conns = new Set();
+const thumbs = new Map();
+let renderSeq = 0;
+
+function startHost() {
+  mode = 'host'; show('host'); history.replaceState(null, '', '#host');
+  code = sessionStorage.getItem(LS.code) || '';
+  openHostPeer();
+}
+function openHostPeer() {
+  if (!code) code = String(Math.floor(100000 + Math.random() * 900000));
+  sessionStorage.setItem(LS.code, code);
+  peer = new Peer(PREFIX + code, peerOpts());
+  peer.on('open', () => { showJoin(); hostStatus(); });
+  peer.on('connection', c => {
+    c.on('open', () => { conns.add(c); hostStatus(); c.send(stateMsg()); });
+    c.on('data', m => onHostMsg(c, m));
+    const gone = () => { conns.delete(c); hostStatus(); showLaser(null); };
+    c.on('close', gone); c.on('error', gone);
+  });
+  peer.on('disconnected', () => { hostStatus('연결 서버와 끊김 — 다시 접속 중…'); setTimeout(() => peer.destroyed || peer.reconnect(), 1500); });
+  peer.on('error', e => {
+    if (e.type === 'unavailable-id') { peer.destroy(); code = ''; openHostPeer(); }
+    else hostStatus('연결 오류: ' + e.type);
+  });
+}
+function showJoin() {
+  const url = location.origin + location.pathname + location.search + '#r=' + code;
+  const q = qrcode(0, 'M'); q.addData(url); q.make();
+  $('#qr').innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+  $('#code').textContent = code.slice(0, 3) + ' ' + code.slice(3);
+  $('#joinUrl').textContent = url;
+  $('#sCode').textContent = '코드 ' + code;
+}
+function hostStatus(err) {
+  const n = conns.size, ok = n > 0;
+  $('#hDot').className = $('#sDot').className = 'dot ' + (ok ? 'ok' : 'wait');
+  $('#hStatus').textContent = err || (ok ? `리모컨 ${n}대 연결됨` : '리모컨 연결을 기다리는 중…');
+}
+const stateMsg = () => ({ t: 'state', cur, total, name: deckName, black, notes: deckNotes() });
+function broadcast(m) { conns.forEach(c => { try { c.open && c.send(m); } catch {} }); }
+
+async function loadFiles(files) {
+  files = [...files];
+  if (!files.length) return;
+  const pdf = files.find(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  try {
+    if (pdf) {
+      if (!window.pdfjsLib) await new Promise((ok, no) => {
+        const s = document.createElement('script'); s.src = 'vendor/pdf.min.js'; s.onload = ok; s.onerror = no; document.head.append(s);
+      });
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+      const doc = await pdfjsLib.getDocument({ data: await pdf.arrayBuffer(), cMapUrl: 'vendor/cmaps/', cMapPacked: true }).promise;
+      deck = { name: pdf.name, count: doc.numPages, async render(n, maxW, maxH) {
+        const page = await doc.getPage(n), v = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: Math.min(maxW / v.width, maxH / v.height) });
+        const c = document.createElement('canvas');
+        c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+        await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+        return c;
+      } };
+    } else {
+      const imgs = files.filter(f => f.type.startsWith('image/'))
+        .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
+      if (!imgs.length) return toast('PDF 또는 이미지 파일만 열 수 있습니다');
+      const bmps = await Promise.all(imgs.map(f => createImageBitmap(f)));
+      deck = { name: imgs.length > 1 ? `${imgs[0].name} 외 ${imgs.length - 1}장` : imgs[0].name, count: bmps.length, async render(n, maxW, maxH) {
+        const b = bmps[n - 1], s = Math.min(maxW / b.width, maxH / b.height);
+        const c = document.createElement('canvas');
+        c.width = Math.round(b.width * s); c.height = Math.round(b.height * s);
+        const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+        x.drawImage(b, 0, 0, c.width, c.height);
+        return c;
+      } };
+    }
+  } catch (e) { console.error(e); return toast('파일을 열 수 없습니다: ' + e.message); }
+  deckName = deck.name; total = deck.count; cur = 1; black = false; thumbs.clear();
+  const pv = await deck.render(1, 480, 270);
+  $('#dropInfo').replaceChildren(pv, Object.assign(document.createElement('p'), { innerHTML: `<b>${deckName.replace(/</g, '&lt;')}</b> · ${total}장` }));
+  $('#start').disabled = false;
+  broadcast(stateMsg());
+  if ($('#stage').classList.contains('show')) drawSlide();
+}
+
+async function drawSlide() {
+  if (!deck) return;
+  const seq = ++renderSeq, dpr = window.devicePixelRatio || 1;
+  const c = await deck.render(cur, innerWidth * dpr, innerHeight * dpr);
+  if (seq !== renderSeq) return;
+  c.style.width = c.width / dpr + 'px'; c.style.height = c.height / dpr + 'px';
+  $('#slide').replaceChildren(c);
+  $('#sPos').textContent = `${cur} / ${total}`;
+}
+function go(n) {
+  if (!deck) return;
+  n = Math.max(1, Math.min(total, n | 0));
+  if (n === cur && !black) return;
+  cur = n; if (black) setBlack(false, true);
+  drawSlide(); broadcast(stateMsg());
+}
+function setBlack(on, quiet) {
+  black = !!on;
+  $('#blackout').style.display = black ? 'block' : 'none';
+  $('#sBlack').classList.toggle('on', black);
+  if (!quiet) broadcast(stateMsg());
+}
+function showLaser(p) {
+  const l = $('#laser');
+  if (!p) return l.style.display = 'none';
+  l.style.display = 'block'; l.style.left = p.x * 100 + '%'; l.style.top = p.y * 100 + '%';
+}
+async function thumb(n) {
+  if (!thumbs.has(n)) thumbs.set(n, deck.render(n, 640, 640).then(c => c.toDataURL('image/jpeg', 0.7)));
+  return thumbs.get(n);
+}
+function onHostMsg(c, m) {
+  if (!m || typeof m !== 'object') return;
+  switch (m.t) {
+    case 'hello': c.send(stateMsg()); break;
+    case 'next': go(cur + 1); break;
+    case 'prev': go(cur - 1); break;
+    case 'go': go(m.n); break;
+    case 'black': setBlack(m.on); break;
+    case 'laser': showLaser(m.on ? m : null); break;
+    case 'thumb':
+      if (deck && m.n >= 1 && m.n <= total) {
+        const name = deckName;
+        thumb(m.n).then(data => { if (c.open && name === deckName) c.send({ t: 'thumb', n: m.n, name, data }); });
+      }
+      break;
+    case 'note':
+      if (m.name !== deckName) break;
+      if (m.text) deckNotes()[m.n] = String(m.text); else delete deckNotes()[m.n];
+      saveNotes();
+      conns.forEach(o => { if (o !== c && o.open) o.send({ t: 'notes', notes: deckNotes() }); });
+      break;
+    case 'notesAll':
+      if (m.all && typeof m.all === 'object') { allNotes = m.all; saveNotes(); broadcast({ t: 'notes', notes: deckNotes() }); }
+      break;
+  }
+}
+function startStage() {
+  if (!deck) return;
+  $('#stage').classList.add('show'); keepAwake();
+  document.documentElement.requestFullscreen?.().catch(() => {});
+  drawSlide();
+}
+function exitStage() {
+  $('#stage').classList.remove('show');
+  if (document.fullscreenElement) document.exitFullscreen();
+}
+let toolT;
+function hostEvents() {
+  $('#pick').onclick = () => $('#file').click();
+  $('#file').onchange = e => loadFiles(e.target.files);
+  const d = $('#drop');
+  addEventListener('dragover', e => { e.preventDefault(); d.classList.add('over'); });
+  addEventListener('dragleave', () => d.classList.remove('over'));
+  addEventListener('drop', e => { e.preventDefault(); d.classList.remove('over'); if (mode === 'host') loadFiles(e.dataTransfer.files); });
+  $('#start').onclick = startStage;
+  $('#sExit').onclick = exitStage;
+  $('#sPrev').onclick = () => go(cur - 1);
+  $('#sNext').onclick = () => go(cur + 1);
+  $('#sBlack').onclick = () => setBlack(!black);
+  $('#sFull').onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
+  $('#hHome').onclick = () => { history.replaceState(null, '', location.pathname + location.search); location.reload(); };
+  $('#stage').addEventListener('mousemove', () => {
+    $('#stage').classList.add('tools'); clearTimeout(toolT);
+    toolT = setTimeout(() => $('#stage').classList.remove('tools'), 2500);
+  });
+  $('#slideBox').addEventListener('click', () => go(cur + 1));
+  addEventListener('resize', () => { if ($('#stage').classList.contains('show')) drawSlide(); });
+  addEventListener('keydown', e => {      // 키보드 · 블루투스 프리젠터(클리커)도 그대로 동작
+    if (mode !== 'host' || !$('#stage').classList.contains('show') || e.target.matches('input,textarea')) return;
+    const k = e.key;
+    if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(k)) go(cur + 1);
+    else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(k)) go(cur - 1);
+    else if (k === 'Home') go(1);
+    else if (k === 'End') go(total);
+    else if (k === 'b' || k === 'B' || k === '.') setBlack(!black);
+    else if (k === 'f' || k === 'F') $('#sFull').click();
+    else if (k === 'Escape') exitStage();
+    else return;
+    e.preventDefault();
+  });
+}
+
+// ══════════════════════ 리모컨 ══════════════════════
+let conn = null, rCode = '', retryT, laserOn = false, rThumbs = new Map(), wanted = new Set();
+
+function startRemote(c) {
+  c = (c || '').replace(/\D/g, '');
+  if (c.length !== 6) return toast('6자리 코드를 입력하세요');
+  mode = 'remote'; rCode = c; show('remote'); history.replaceState(null, '', '#r=' + c);
+  keepAwake(); rStatus('wait', '연결 중…');
+  peer = new Peer(peerOpts());
+  peer.on('open', dial);
+  peer.on('disconnected', () => { rStatus('wait', '다시 연결 중…'); setTimeout(() => peer.destroyed || peer.reconnect(), 1500); });
+  peer.on('error', e => {
+    if (e.type === 'peer-unavailable') { rStatus('bad', `코드 ${rCode} 화면을 찾는 중…`); redial(3000); }
+    else rStatus('bad', '연결 오류: ' + e.type);
+  });
+}
+function redial(ms) { clearTimeout(retryT); retryT = setTimeout(dial, ms); }
+function dial() {
+  if (mode !== 'remote' || peer.destroyed) return;
+  if (peer.disconnected) return redial(1500);
+  if (conn) { conn.removeAllListeners(); try { conn.close(); } catch {} }
+  const c = conn = peer.connect(PREFIX + rCode, { reliable: true });
+  c.on('open', () => { rStatus('ok', '연결됨'); c.send({ t: 'hello' }); });
+  c.on('data', onRemoteMsg);
+  const lost = () => { if (conn !== c) return; rStatus('wait', '연결이 끊겼습니다 — 다시 연결 중…'); redial(1500); };
+  c.on('close', lost); c.on('error', lost);
+}
+function rStatus(kind, text) {
+  $('#rDot').className = 'dot ' + (kind === 'ok' ? 'ok' : kind === 'wait' ? 'wait' : '');
+  $('#rStatus').textContent = text;
+}
+function send(m) {
+  if (conn?.open) { conn.send(m); return true; }
+  toast('화면과 연결되어 있지 않습니다'); return false;
+}
+function onRemoteMsg(m) {
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'state') {
+    if (m.name !== deckName || m.total !== total) { rThumbs.clear(); wanted.clear(); $('#grid').replaceChildren(); }
+    const moved = m.cur !== cur || m.name !== deckName;
+    deckName = m.name; total = m.total; cur = m.cur; black = m.black;
+    allNotes[deckName] = m.notes || {};
+    $('#rStatus').textContent = total ? deckName : '화면에서 파일을 열어 주세요';
+    $('#rPos').textContent = total ? `${cur} / ${total}` : '– / –';
+    $('#tBlack').classList.toggle('on', black);
+    if (moved || document.activeElement !== $('#note')) $('#note').value = deckNotes()[cur] || '';
+    paintPreview(); markGrid();
+  } else if (m.t === 'thumb') {
+    if (m.name !== deckName) return;
+    rThumbs.set(m.n, m.data); paintPreview();
+    const im = $(`#grid .cell[data-n="${m.n}"] img`); if (im) im.src = m.data;
+  } else if (m.t === 'notes') {
+    allNotes[deckName] = m.notes || {};
+    if (document.activeElement !== $('#note')) $('#note').value = deckNotes()[cur] || '';
+  }
+}
+function want(n) {
+  if (n < 1 || n > total || rThumbs.has(n) || wanted.has(n) || !conn?.open) return;
+  wanted.add(n); conn.send({ t: 'thumb', n });
+}
+function paintPreview() {
+  const set = (img, n) => { const d = n >= 1 && n <= total && rThumbs.get(n); if (d) img.src = d; else img.removeAttribute('src'); want(n); };
+  set($('#imgCur'), cur); set($('#imgNext'), cur + 1);
+  $('#pvNext .tag').textContent = cur >= total && total ? '마지막 슬라이드' : '다음';
+  want(cur + 2); want(cur - 1);
+}
+let gridObs;
+function openList() {
+  const g = $('#grid');
+  if (g.children.length !== total) {
+    gridObs?.disconnect();
+    gridObs = new IntersectionObserver(es => es.forEach(e => e.isIntersecting && want(+e.target.dataset.n)), { root: g, rootMargin: '200px' });
+    g.replaceChildren(...Array.from({ length: total }, (_, i) => {
+      const b = document.createElement('button'); b.className = 'cell'; b.dataset.n = i + 1;
+      const im = new Image(); if (rThumbs.has(i + 1)) im.src = rThumbs.get(i + 1);
+      const s = document.createElement('span'); s.textContent = i + 1;
+      b.append(im, s); gridObs.observe(b); return b;
+    }));
+  }
+  markGrid(); $('#listSheet').classList.add('show');
+  $('#grid .cell.cur')?.scrollIntoView({ block: 'center' });
+}
+function markGrid() { document.querySelectorAll('#grid .cell').forEach(c => c.classList.toggle('cur', +c.dataset.n === cur)); }
+
+// 타이머
+let tStart = 0, tAcc = 0, tInt;
+const tNow = () => tAcc + (tStart ? Date.now() - tStart : 0);
+function tPaint() {
+  const s = Math.floor(tNow() / 1000), h = Math.floor(s / 3600);
+  const mm = String(Math.floor(s / 60) % 60).padStart(2, '0'), ss = String(s % 60).padStart(2, '0');
+  $('#timer').textContent = (h ? h + ':' : '') + mm + ':' + ss;
+  $('#timer').classList.toggle('on', !!tStart);
+}
+function tToggle() {
+  if (tStart) { tAcc = tNow(); tStart = 0; clearInterval(tInt); }
+  else { tStart = Date.now(); tInt = setInterval(tPaint, 500); }
+  tPaint();
+}
+function tReset() { tAcc = 0; tStart = 0; clearInterval(tInt); tPaint(); toast('타이머 초기화'); }
+
+function remoteEvents() {
+  const tap = (el, fn) => el.addEventListener('click', () => { navigator.vibrate?.(15); fn(); });
+  tap($('#bNext'), () => { if (send({ t: 'next' }) && !tStart && !tAcc) tToggle(); });
+  tap($('#bPrev'), () => send({ t: 'prev' }));
+  tap($('#tBlack'), () => send({ t: 'black', on: !black }));
+  tap($('#tList'), () => total ? openList() : toast('화면에 열린 슬라이드가 없습니다'));
+  tap($('#tLaser'), () => {
+    laserOn = !laserOn; $('#tLaser').classList.toggle('on', laserOn); $('#pvCur').classList.toggle('laser', laserOn);
+    if (laserOn) toast('현재 슬라이드 미리보기를 손가락으로 짚으세요'); else send({ t: 'laser', on: false });
+  });
+  $('#tExit').onclick = () => { history.replaceState(null, '', location.pathname + location.search); location.reload(); };
+  $('#grid').addEventListener('click', e => {
+    const c = e.target.closest('.cell'); if (!c) return;
+    send({ t: 'go', n: +c.dataset.n }); $('#listSheet').classList.remove('show');
+  });
+
+  // 타이머: 탭 = 시작/정지, 길게 = 초기화
+  let hold, held;
+  const tm = $('#timer');
+  tm.addEventListener('pointerdown', () => { held = false; hold = setTimeout(() => { held = true; tReset(); }, 700); });
+  tm.addEventListener('pointerup', () => { clearTimeout(hold); if (!held) tToggle(); });
+  tm.addEventListener('pointerleave', () => clearTimeout(hold));
+
+  // 현재 미리보기: 포인터 모드 = 레이저, 아니면 좌우 쓸기로 넘기기
+  const pv = $('#pvCur'); let sx = null, lastL = 0;
+  const laser = e => {
+    const r = $('#imgCur').getBoundingClientRect(); if (!r.width) return;
+    const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    const now = Date.now(); if (now - lastL < 30) return; lastL = now;
+    if (conn?.open) conn.send({ t: 'laser', on: x >= 0 && x <= 1 && y >= 0 && y <= 1, x, y });
+  };
+  pv.addEventListener('pointerdown', e => { pv.setPointerCapture(e.pointerId); sx = e.clientX; if (laserOn) { lastL = 0; laser(e); } });
+  pv.addEventListener('pointermove', e => { if (laserOn && sx !== null) laser(e); });
+  const up = e => {
+    if (sx === null) return;
+    if (laserOn) { if (conn?.open) conn.send({ t: 'laser', on: false }); }
+    else { const dx = e.clientX - sx; if (Math.abs(dx) > 50) { navigator.vibrate?.(15); send({ t: dx < 0 ? 'next' : 'prev' }); } }
+    sx = null;
+  };
+  pv.addEventListener('pointerup', up); pv.addEventListener('pointercancel', up);
+
+  // 메모
+  let noteT;
+  $('#note').addEventListener('input', () => {
+    const n = cur, name = deckName, text = $('#note').value;
+    if (!name) return;
+    if (text) deckNotes()[n] = text; else delete deckNotes()[n];
+    clearTimeout(noteT);
+    noteT = setTimeout(() => conn?.open && conn.send({ t: 'note', name, n, text }), 400);
+  });
+}
+
+// ══════════════════════ Gist 저장 ══════════════════════
+const GIST_API = 'https://api.github.com/gists', GIST_FILE = 'slide-remote.json';
+function gistStatus(text, color) { const s = $('#gistStatus'); s.textContent = text; s.style.color = color || 'var(--muted)'; }
+function gistHeaders(token) {
+  return { Authorization: 'token ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' };
+}
+function gistRemember(token, id) {
+  if ($('#gRemember').checked) localStorage.setItem(LS.token, token); else localStorage.removeItem(LS.token);
+  if (id) localStorage.setItem(LS.gid, id);
+}
+async function gistSave() {
+  const token = $('#gToken').value.trim(), id = $('#gId').value.trim();
+  if (!token) return gistStatus('❌ 토큰을 입력하세요', 'var(--bad)');
+  gistStatus('저장 중…');
+  try {
+    const body = { files: { [GIST_FILE]: { content: JSON.stringify({ app: 'slide-remote', version: 1, savedAt: new Date().toISOString(), notes: allNotes }, null, 2) } } };
+    if (!id) { body.description = '슬라이드 리모컨 발표 메모'; body.public = $('#gPublic').checked; }
+    const res = await fetch(id ? `${GIST_API}/${id}` : GIST_API, { method: id ? 'PATCH' : 'POST', headers: gistHeaders(token), body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok || !data.id) throw new Error(data.message || '저장 실패 (' + res.status + ')');
+    $('#gId').value = data.id; gistRemember(token, data.id);
+    gistStatus(`✅ 저장 완료 — Gist ID ${data.id}`, 'var(--ok)');
+  } catch (e) { gistStatus('❌ ' + e.message, 'var(--bad)'); }
+}
+async function gistLoad() {
+  const token = $('#gToken').value.trim(), id = $('#gId').value.trim();
+  if (!token || !id) return gistStatus('❌ 토큰과 Gist ID가 모두 필요합니다', 'var(--bad)');
+  gistStatus('불러오는 중…');
+  try {
+    const res = await fetch(`${GIST_API}/${id}`, { headers: gistHeaders(token) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || '불러오기 실패 (' + res.status + ')');
+    const f = data.files?.[GIST_FILE];
+    if (!f) throw new Error(GIST_FILE + ' 파일이 없는 Gist입니다');
+    const text = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
+    const st = JSON.parse(text);
+    if (!st.notes || typeof st.notes !== 'object') throw new Error('메모 데이터가 없습니다');
+    allNotes = st.notes; saveNotes(); gistRemember(token, id);
+    if (mode === 'host') broadcast({ t: 'notes', notes: deckNotes() });
+    if (mode === 'remote') { $('#note').value = deckNotes()[cur] || ''; conn?.open && conn.send({ t: 'notesAll', all: allNotes }); }
+    gistStatus(`✅ 불러오기 완료 — 발표 자료 ${Object.keys(allNotes).length}개의 메모`, 'var(--ok)');
+  } catch (e) { gistStatus('❌ ' + e.message, 'var(--bad)'); }
+}
+
+// ══════════════════════ 시작 ══════════════════════
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-close]')) e.target.closest('.sheet').classList.remove('show');
+  if (e.target.closest('[data-open="gist"]')) {
+    $('#gToken').value ||= localStorage.getItem(LS.token) || '';
+    $('#gId').value ||= localStorage.getItem(LS.gid) || '';
+    $('#gRemember').checked = !!localStorage.getItem(LS.token);
+    $('#gistSheet').classList.add('show');
+  }
+});
+$('#gSave').onclick = gistSave; $('#gLoad').onclick = gistLoad;
+$('#goHost').onclick = startHost;
+$('#goRemote').onclick = () => startRemote($('#codeIn').value);
+$('#codeIn').addEventListener('keydown', e => e.key === 'Enter' && $('#goRemote').click());
+hostEvents(); remoteEvents();
+
+const h = location.hash;
+if (/^#r=\d{6}$/.test(h)) startRemote(h.slice(3));
+else if (h === '#host') startHost();
+</script>
+</body>
+</html>
