@@ -16,5 +16,5 @@ for p in ../ieumoffice/packages/*; do ln -sfn "$(realpath $p)" node_modules/@gen
 IEUM_SRC=$(realpath ../ieumoffice) node build.mjs      # → ieum-pptx.js
 ```
 
-`entry.tsx`가 이 저장소에서 쓴 연결 코드이고(파일 열기, 슬라이드 그리기, 동영상 위치·노트 추출),
+`entry.tsx`가 이 저장소에서 쓴 연결 코드이고(파일 열기, 슬라이드 그리기, 애니메이션 재생기 연결, 동영상 위치·노트 추출),
 나머지는 이음오피스 원본 그대로입니다.

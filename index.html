@@ -336,7 +336,7 @@ async function loadFiles(files) {
       toast('파워포인트 파일을 여는 중…');
       if (!window.IeumPptx) await loadScript('vendor/ieum-pptx.js');
       const d = await IeumPptx.open(await pptx.arrayBuffer());
-      next = { name: pptx.name, count: d.count, render: (n, w, h) => d.render(n, w, h), media: n => d.media(n), close: () => d.close(), pptNotes: d };
+      next = { name: pptx.name, count: d.count, render: (n, w, h) => d.render(n, w, h), media: n => d.media(n), close: () => d.close(), pptNotes: d, live: d };
     } else if (pdf) {
       if (!window.pdfjsLib) await loadScript('vendor/pdf.min.js');
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
@@ -364,7 +364,7 @@ async function loadFiles(files) {
       } };
     }
   } catch (e) { console.error(e); return toast('파일을 열 수 없습니다: ' + e.message); }
-  pptStop(); clearMedia();
+  pptStop(); clearMedia(); clearShow();
   try { deck?.close?.(); } catch {}
   deck = next;
   deckName = deck.name; total = deck.count; cur = 1; black = false; thumbs.clear();
@@ -391,7 +391,7 @@ function setupMedia() {
   try { list = deck?.media?.(cur) || []; } catch (e) { console.error(e); }
   for (const m of list) {
     const el = document.createElement(m.kind === 'video' ? 'video' : 'audio');
-    el.src = m.url; el.preload = 'auto'; el.playsInline = true;
+    el.src = m.url; el.preload = 'auto'; el.playsInline = true; el.dataset.id = m.id;
     const box = m.kind === 'video' ? el : Object.assign(document.createElement('div'), { className: 'aud' });
     if (box !== el) box.append(el); else el.className = 'idle';
     Object.assign(box.style, { left: m.x * 100 + '%', top: m.y * 100 + '%', width: m.w * 100 + '%', height: m.h * 100 + '%', transform: m.rotation ? `rotate(${m.rotation}deg)` : '' });
@@ -408,10 +408,37 @@ function toggleMedia(el) {
   if (!el) return;
   if (!el.paused) return el.pause();
   mediaEls.forEach(m => m !== el && m.pause());
+  playMedia(el);
+}
+function playMedia(el) {
   el.play().catch(() => { el.muted = true; el.play().then(() => toast('소리 없이 재생합니다 — 화면을 한 번 클릭하면 소리가 납니다')).catch(() => {}); });
 }
-async function drawSlide() {
+// ── PPTX 라이브 화면: 이음오피스 재생기가 애니메이션·화면 전환을 직접 재생 ──
+let liveShow = null;
+const liveWidth = () => Math.floor(Math.min(innerWidth, innerHeight * deck.live.aspect));
+function clearShow() { try { liveShow?.destroy(); } catch {} liveShow = null; }
+function onShowMedia(id, effect) {
+  const el = mediaEls.find(m => m.dataset.id === id);
+  if (!el) return;
+  if (effect === 'mediaPlay') { el.currentTime = 0; playMedia(el); }
+  else if (effect === 'mediaPause') { el.paused ? playMedia(el) : el.pause(); }
+  else if (effect === 'mediaStop') { el.pause(); el.currentTime = 0; }
+}
+async function drawSlide(mode = 'all') {
   if (!deck) return;
+  if (deck.live) {
+    const seq = ++renderSeq;
+    if (!liveShow) {
+      const host = document.createElement('div');
+      $('#slide').replaceChildren(host);
+      liveShow = deck.live.createShow(host, { onMedia: onShowMedia });
+    }
+    $('#sPos').textContent = `${cur} / ${total}`;
+    setupMedia();
+    try { await liveShow.go(cur, mode, liveWidth()); } catch (e) { console.error(e); }
+    if (seq === renderSeq) broadcast(stateMsg());
+    return;
+  }
   const seq = ++renderSeq, dpr = window.devicePixelRatio || 1;
   const c = await deck.render(cur, innerWidth * dpr, innerHeight * dpr);
   if (seq !== renderSeq) return;
@@ -420,14 +447,18 @@ async function drawSlide() {
   $('#sPos').textContent = `${cur} / ${total}`;
   setupMedia(); broadcast(stateMsg());
 }
-const step = d => deck?.ppt ? pptCmd(d > 0 ? 'next' : 'prev') : go(cur + d);
-function go(n) {
+function step(d) {
+  if (deck?.ppt) return pptCmd(d > 0 ? 'next' : 'prev');
+  if (d > 0 && liveShow && $('#stage').classList.contains('show') && !black && liveShow.advance()) return;   // 이 슬라이드의 다음 애니메이션
+  go(cur + d, d > 0 ? 'fresh' : 'all');
+}
+function go(n, mode = 'all') {
   if (!deck) return;
   n = Math.max(1, Math.min(total, n | 0));
   if (deck.ppt) return pptCmd('go', { n });
   if (n === cur && !black) return;
   cur = n; clearMedia(); if (black) setBlack(false, true);
-  drawSlide(); broadcast(stateMsg());
+  drawSlide(mode); broadcast(stateMsg());
 }
 function setBlack(on, quiet) {
   if (deck?.ppt) return pptCmd('black', { on: on ? 1 : 0 });
@@ -510,7 +541,7 @@ async function pptApply(st, force) {
   const fresh = force || !deck?.ppt || st.name !== deckName || st.total !== total;
   const changed = fresh || st.cur !== cur || st.black !== black || st.running !== deck.running;
   if (fresh) {
-    thumbs.clear(); clearMedia();
+    thumbs.clear(); clearMedia(); clearShow();
     try { deck?.close?.(); } catch {}
     deck = { ppt: true, name: st.name, count: st.total, async render(n, maxW, maxH) {
       const b = await createImageBitmap(await (await pptFetch('/thumb?n=' + n)).blob());
@@ -552,10 +583,10 @@ function startStage() {
   if (!deck) return;
   $('#stage').classList.add('show'); keepAwake();
   document.documentElement.requestFullscreen?.().catch(() => {});
-  drawSlide();
+  drawSlide('fresh');
 }
 function exitStage() {
-  clearMedia();
+  clearMedia(); clearShow(); $('#slide').replaceChildren();
   $('#stage').classList.remove('show');
   if (document.fullscreenElement) document.exitFullscreen();
 }
@@ -580,12 +611,12 @@ function hostEvents() {
     toolT = setTimeout(() => $('#stage').classList.remove('tools'), 2500);
   });
   $('#slideBox').addEventListener('click', () => step(1));
-  addEventListener('resize', () => { if ($('#stage').classList.contains('show')) drawSlide(); });
+  addEventListener('resize', () => { if (!$('#stage').classList.contains('show')) return; if (liveShow) liveShow.resize(liveWidth()); else drawSlide(); });
   addEventListener('keydown', e => {      // 키보드 · 블루투스 프리젠터(클리커)도 그대로 동작
     if (mode !== 'host' || !$('#stage').classList.contains('show') || e.target.matches('input,textarea')) return;
     const k = e.key;
-    if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(k)) go(cur + 1);
-    else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(k)) go(cur - 1);
+    if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(k)) step(1);
+    else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(k)) step(-1);
     else if (k === 'Home') go(1);
     else if (k === 'End') go(total);
     else if (k === 'b' || k === 'B' || k === '.') setBlack(!black);

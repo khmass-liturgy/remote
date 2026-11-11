@@ -4,10 +4,12 @@
  * adapter) are IeumOffice / GenOffice code (Apache-2.0); this file only wires them
  * together for a read-only viewer.
  */
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type Konva from 'konva'
-import { openPptx, getSlideNotes, type SlideElement } from '@genoffice/pptx-engine'
+import { openPptx, getSlideNotes, getSlideAnimations, getSlideTransition, elementSpid, type SlideElement } from '@genoffice/pptx-engine'
+import { AnimatedSlideStage, useAnimPlayer } from '@ieum-slides/renderer/components/AnimatedSlide'
+import type { AnimationItem } from '@ieum-slides/shared/ipc'
 import { buildRenderSlide, type RenderSlide, type FontMetricsProvider, type RunStyle } from '@genoffice/pptx-render'
 import { displayFontFamily } from '@ieum-slides/renderer/konva-adapter'
 import { SlideThumb } from '@ieum-slides/renderer/SlideThumb'
@@ -20,6 +22,83 @@ const MEDIA_MIME: Record<string, string> = {
   mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', ogg: 'audio/ogg', wma: 'audio/x-ms-wma', aac: 'audio/aac',
 }
 const BASE_W = 1280
+
+/** Page-transition approximations, the same keyframes IeumOffice's show view uses (styles.css ss-anim-*). */
+const TRANSITION_CSS = `
+.ieum-tr{line-height:0}
+.ieum-tr-fade,.ieum-tr-morph{animation:ieum-fade .5s ease both}
+.ieum-tr-push{animation:ieum-push .5s ease-out both}
+.ieum-tr-wipe{animation:ieum-wipe .6s ease-out both}
+.ieum-tr-split{animation:ieum-split .55s ease-out both}
+.ieum-tr-circle{animation:ieum-circle .6s ease-out both}
+.ieum-tr-cover{animation:ieum-cover .5s ease both}
+.ieum-tr-pull{animation:ieum-pull .5s ease both}
+.ieum-tr-dissolve{animation:ieum-fade .6s steps(12) both}
+.ieum-tr-zoom{animation:ieum-zoomin .5s ease both}
+@keyframes ieum-fade{from{opacity:0}to{opacity:1}}
+@keyframes ieum-push{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes ieum-wipe{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+@keyframes ieum-split{from{clip-path:inset(50% 0 50% 0)}to{clip-path:inset(0 0 0 0)}}
+@keyframes ieum-circle{from{clip-path:circle(0% at 50% 50%)}to{clip-path:circle(75% at 50% 50%)}}
+@keyframes ieum-cover{from{transform:translateX(100%)}to{transform:translateX(0)}}
+@keyframes ieum-pull{from{clip-path:inset(0 0 0 100%)}to{clip-path:inset(0 0 0 0)}}
+@keyframes ieum-zoomin{from{transform:scale(.2);opacity:0}to{transform:scale(1);opacity:1}}
+`
+const ANIMATED_TRANSITIONS = ['fade', 'push', 'wipe', 'split', 'circle', 'cover', 'pull', 'dissolve', 'zoom']
+
+interface ShowHandle {
+  go(n: number, mode: 'fresh' | 'all', width: number): void
+  advance(): boolean
+  resize(width: number): void
+}
+interface ShowDeck {
+  slide(n: number): RenderSlide
+  anims(n: number): AnimationItem[]
+  transition(n: number): string
+  images: Map<string, HTMLImageElement>
+  onMedia?: (sourceId: string, effect: string) => void
+}
+
+/** Live slide: IeumOffice's animation player (useAnimPlayer) driving its animated Konva stage. */
+function ShowView({ deck, bind }: { deck: ShowDeck; bind: (h: ShowHandle) => void }) {
+  const [st, setSt] = useState({ n: 0, width: 0, nonce: 0, trans: 'none' })
+  const slide = st.n ? deck.slide(st.n) : null
+  const player = useAnimPlayer(slide?.heightPx ?? 720, slide?.widthPx ?? 1280)
+  const ref = useRef(player)
+  ref.current = player
+  useEffect(() => {
+    bind({
+      go(n, mode, width) {
+        let trans = mode === 'fresh' ? deck.transition(n) : 'none'
+        if (trans === 'random') trans = ANIMATED_TRANSITIONS[Math.floor(Math.random() * ANIMATED_TRANSITIONS.length)]!
+        setSt((s) => ({ n, width, nonce: s.nonce + 1, trans }))
+        ref.current.load(deck.anims(n), mode)
+      },
+      advance: () => ref.current.advance(),
+      resize: (width) => setSt((s) => ({ ...s, width })),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // media animations (play / pause / stop in the click sequence) are handed to the page's players
+  const applied = useRef(0)
+  const seenEpoch = useRef(-1)
+  useEffect(() => {
+    if (seenEpoch.current !== player.epoch) {
+      seenEpoch.current = player.epoch
+      applied.current = player.mediaBase
+    }
+    while (applied.current < player.mediaCmds.length) {
+      const c = player.mediaCmds[applied.current++]!
+      deck.onMedia?.(c.sourceId, c.effect)
+    }
+  }, [player.mediaCmds, player.epoch, player.mediaBase, deck])
+  if (!slide || !st.width) return null
+  return (
+    <div key={st.nonce} className={`ieum-tr${st.trans !== 'none' ? ` ieum-tr-${st.trans}` : ''}`}>
+      <AnimatedSlideStage slide={slide} images={deck.images} width={st.width} states={player.states} />
+    </div>
+  )
+}
 
 /**
  * Text metrics from the browser's own canvas, using the same font stack the Konva
@@ -170,8 +249,82 @@ export async function open(data: ArrayBuffer | Uint8Array) {
     return out
   }
 
+  /** This slide's animations, keyed to render nodes the way IeumOffice's main process does. */
+  function animsOf(n: number): AnimationItem[] {
+    const slide = deck.slides[n - 1]!
+    const bySpid = new Map<number, SlideElement>()
+    const walk = (els: SlideElement[]) => {
+      for (const el of els) {
+        const id = elementSpid(el)
+        if (id != null) bySpid.set(id, el)
+        const kids = (el as { children?: SlideElement[] }).children
+        if (kids) walk(kids)
+      }
+    }
+    walk(slide.elements)
+    const out: AnimationItem[] = []
+    try {
+      for (const a of getSlideAnimations(slide)) {
+        const el = bySpid.get(a.spid)
+        if (!el) continue
+        out.push({
+          sourceId: el.id, targetName: el.name ?? '', effect: a.effect, trigger: a.trigger,
+          durationMs: a.durationMs, delayMs: a.delayMs,
+          ...(a.direction != null ? { direction: a.direction } : {}),
+          ...(a.motionPath != null ? { motionPath: a.motionPath } : {}),
+          ...(a.paragraph != null ? { paragraph: a.paragraph } : {}),
+        })
+      }
+    } catch (e) { console.warn('animations unreadable on slide', n, e) }
+    return out
+  }
+
+  /**
+   * Live show inside `container`: go(n, 'fresh') enters a slide with its transition and
+   * animations armed, go(n, 'all') shows it fully built; advance() plays the next
+   * animation step and returns false once the slide has nothing left to play.
+   */
+  function createShow(container: HTMLElement, opts: { onMedia?: (sourceId: string, effect: string) => void } = {}) {
+    if (!document.getElementById('ieum-tr-css')) {
+      const st = document.createElement('style')
+      st.id = 'ieum-tr-css'
+      st.textContent = TRANSITION_CSS
+      document.head.appendChild(st)
+    }
+    let handle: ShowHandle | null = null
+    let token = 0
+    const showRoot = createRoot(container)
+    const showDeck: ShowDeck = {
+      slide: (n) => build(n - 1),
+      anims: animsOf,
+      transition: (n) => { try { return getSlideTransition(deck.slides[n - 1]!) } catch { return 'none' } },
+      images,
+      onMedia: opts.onMedia,
+    }
+    const ready = new Promise<void>((resolve) => {
+      showRoot.render(<ShowView deck={showDeck} bind={(h) => { handle = h; resolve() }} />)
+    })
+    return {
+      async go(n: number, mode: 'fresh' | 'all', width: number) {
+        const mine = ++token
+        build(n - 1)
+        await ready
+        await settle()
+        if (mine !== token) return
+        handle!.go(n, mode, width)
+        if (n < deck.slides.length) build(n) // start decoding the next slide's pictures
+      },
+      advance: () => handle?.advance() ?? false,
+      resize: (width: number) => handle?.resize(width),
+      steps: (n: number) => animsOf(n).filter((a) => a.trigger === 'onClick').length,
+      destroy() { token++; showRoot.unmount() },
+    }
+  }
+
   return {
     count: deck.slides.length,
+    aspect: deck.size.cx / deck.size.cy,
+    createShow,
     render,
     media: mediaOf,
     notes: (n: number) => { try { return getSlideNotes(archive, deck.slides[n - 1]!.path) } catch { return '' } },

@@ -7,6 +7,7 @@ const r = await build({
   jsx: 'automatic', nodePaths: [path.join(here, 'node_modules')],
   alias: { 'node:crypto': './shim-crypto.js', 'node:zlib': './shim-crypto.js', 'node:fs': './shim-crypto.js', 'node:stream/promises': './shim-crypto.js', 'node:path': './shim-crypto.js', 'node:os': './shim-crypto.js', '@ieum-slides': path.join(SRC, 'apps/slides/src') },
   inject: ['./inject-buffer.js'],
+  plugins: [{ name: 'no-ui-i18n', setup(b) { b.onResolve({ filter: /\/i18n\/locale$/ }, () => ({ path: path.join(here, 'shim-i18n.js') })) } }],
   define: { 'process.env.NODE_ENV': '"production"', global: 'globalThis' },
   loader: { '.png': 'dataurl', '.svg': 'dataurl', '.woff2': 'dataurl', '.ttf': 'dataurl' },
   logLimit: 40,
