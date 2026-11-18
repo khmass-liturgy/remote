@@ -438,11 +438,7 @@ function setupMedia() {
   clearMedia();
   let list = [];
   try { list = deck?.media?.(cur) || []; } catch (e) { console.error(e); }
-  // 한 슬라이드에 여러 개면 읽는 순서(위→아래, 같은 줄은 왼쪽→오른쪽)로 차례를 정합니다
-  list = [...list].sort((a, b) => {
-    const sameRow = a.y < b.y + b.h / 2 && b.y < a.y + a.h / 2;
-    return sameRow ? a.x - b.x : a.y - b.y;
-  });
+  // 한 슬라이드에 여러 개면 파워포인트에 넣은 순서(슬라이드 파일 안의 순서)대로 차례를 정합니다
   for (const m of list) {
     const el = document.createElement(m.kind === 'video' ? 'video' : 'audio');
     el.src = m.url; el.preload = 'auto'; el.playsInline = true; el.dataset.id = m.id;
